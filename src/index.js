@@ -206,9 +206,48 @@ function performUnitOWork(fiber) {
     }
 }
 
+let wipFiber = null
+let hookIndex = null
+
 function updateFunctionComponent(fiber) {
+    wipFiber = fiber
+    hookIndex = 0
+    wipFiber.hooks = []
+
     const children = [fiber.type(fiber.props)]
     reconcileChildren(fiber, children)
+}
+
+function useState(initial) {
+    const oldHook = 
+        wipFiber.alternate &&
+        wipFiber.alternate.hooks && 
+        wipFiber.alternate.hooks[hookIndex]
+
+    const hook = {
+        state: oldHook ? oldHook.state : initial,
+        queue: []
+    }
+
+    const actions = oldHook ? oldHook.queue : []
+    actions.forEach(action => {
+        hook.state = action(hook.state)
+    })
+
+    const setState = action => {
+        hook.queue.push(action)
+        wipRoot = {
+            dom: currentRoot.dom,
+            props: currentRoot.props,
+            alternate: currentRoot,
+        }
+        nextUnitOfWork = wipRoot
+        deletions = []
+    }
+
+    wipFiber.hooks.push(hook)
+    hookIndex++
+    return [hook.state, setState]
 }
 
 function updateHostComponent(fiber) {
@@ -280,21 +319,35 @@ function reconcileChildren(wipFiber, elements){
 const Didact = {
 	createElement,
 	render,
+    useState
 }
 
+
+// function App(props) {
+//     return <h1>Hello {props.name}</h1>
+// }
+
 /** @jsx Didact.createElement */
-function App(props) {
-    return <h1>Hello {props.name}</h1>
+function Counter() {
+    const [state, setState] = Didact.useState(1)
+    return (
+        <h1 onClick={() => setState(c => c + 1)}>
+            Count: {state}
+        </h1>
+    )
 }
+
 
 // Root container
 const container = document.getElementById("root")
+const element = <Counter />
+Didact.render(element, container)
 
-const updateValue = e => {
-    rerender(e.target.value)
-}
+// const updateValue = e => {
+//     rerender(e.target.value)
+// }
 
-const rerender = value => {
+// const rerender = value => {
     // const element = (
     //     <div>
     //         <input onInput={updateValue} value={value} />
@@ -302,8 +355,8 @@ const rerender = value => {
     //     </div>
     // )
     // Didact.render(element, container)
-    const element = <App name="foo" name={value}/>
-    Didact.render(element, container)
-}
+//     const element = <App name="foo" name={value}/>
+//     Didact.render(element, container)
+// }
 
-rerender("world!")
+// rerender("world!")
