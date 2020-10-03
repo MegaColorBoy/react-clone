@@ -34,25 +34,6 @@ function createTextElement(text) {
 	}
 }
 
-//function render(element, container) {
-//	const dom = element.type == "TEXT_ELEMENT" 
-//		? document.createTextNode("")
-//		: document.createElement(element.type)
-//
-//	const isProperty = key => key !== "children"
-//	Object.keys(element.props)
-//		.filter(isProperty)
-//		.forEach(name => {
-//			dom[name] = element.props[name]
-//		})
-//
-//	element.props.children.forEach(child => 
-//		render(child, dom)
-//	)
-//
-//	container.appendChild(dom)
-//}
-
 function createDom(fiber) {
   const dom =
     fiber.type == "TEXT_ELEMENT"
@@ -63,23 +44,6 @@ function createDom(fiber) {
 
   return dom
 }
-
-function render(element, container) {
-    wipRoot = {
-        dom: container,
-        props: {
-            children: [element],
-        },
-        alternate: currentRoot,
-    }
-    deletions = []
-    nextUnitOfWork = wipRoot
-}
-
-let nextUnitOfWork = null
-let currentRoot = null
-let wipRoot = null
-let deletions = null    
 
 // If the key is an event handler
 const isEvent = key => key.startsWith("on")
@@ -100,15 +64,6 @@ function updateDom(dom, prevProps, nextProps){
             dom.removeEventListener(eventType, prevProps[name])
         })
 
-    // Add new event handlers
-    Object.keys(nextProps)
-        .filter(isEvent)
-        .filter(isNew(prevProps, nextProps))
-        .forEach(name => {
-            const eventType = name.toLowerCase().substring(2)
-            dom.addEventListener(eventType, nextProps[name])
-        })
-
     // Remove old properties
     Object.keys(prevProps)
         .filter(isProperty)
@@ -120,9 +75,18 @@ function updateDom(dom, prevProps, nextProps){
     // Set new or changed properties
     Object.keys(nextProps)
         .filter(isProperty)
-        .filter(isGone(prevProps, nextProps))
+        .filter(isNew(prevProps, nextProps))
         .forEach(name => {
             dom[name] = nextProps[name]
+        })
+
+    // Add new event handlers
+    Object.keys(nextProps)
+        .filter(isEvent)
+        .filter(isNew(prevProps, nextProps))
+        .forEach(name => {
+            const eventType = name.toLowerCase().substring(2)
+            dom.addEventListener(eventType, nextProps[name])
         })
 }
 
@@ -138,7 +102,13 @@ function commitWork(fiber){
     if(!fiber){
         return
     }
-    const domParent = fiber.parent.dom
+
+    let domParentFiber = fiber.parent
+    while(!domParentFiber.dom) {
+        domParentFiber = domParentFiber.parent
+    }
+
+    const domParent = domParentFiber.dom
     //domParent.appendChild(fiber.dom)
     /*
         If the fiber has a PLACEMENT tag, append the DOM
@@ -158,11 +128,41 @@ function commitWork(fiber){
         )
     // Else, remove it 
     } else if(fiber.effectTag === "DELETION"){
-        domParent.removeChild(fiber.dom)
+        // domParent.removeChild(fiber.dom)
+        commitDeletion(fiber, domParent)
     }
     commitWork(fiber.child)
     commitWork(fiber.sibling)
 }
+
+/*
+    When you're removing a parent node, make sure you delete
+    it's child nodes as well.
+*/
+function commitDeletion(fiber, domParent) {
+    if(fiber.dom) {
+        domParent.removeChild(fiber.dom)
+    } else {
+        commitDeletion(fiber.child, domParent)
+    }
+}
+
+function render(element, container) {
+    wipRoot = {
+        dom: container,
+        props: {
+            children: [element],
+        },
+        alternate: currentRoot,
+    }
+    deletions = []
+    nextUnitOfWork = wipRoot
+}
+
+let nextUnitOfWork = null
+let currentRoot = null
+let wipRoot = null
+let deletions = null    
 
 function workLoop(deadline) {
 	let shouldYield = false
@@ -182,17 +182,15 @@ function workLoop(deadline) {
 requestIdleCallback(workLoop)
 
 function performUnitOWork(fiber) {
-	if(!fiber.dom){
-        fiber.dom = createDom(fiber)
-    }
-    
-    if(fiber.parent){
-        fiber.parent.dom.appendChild(fiber.dom)
-    }
 
-    // Create new fibers
-    const elements = fiber.props.children
-    reconcileChildren(fiber, elements)
+    // If it's a function component
+    const isFunctionComponent = fiber.type instanceof Function
+
+    if(isFunctionComponent) {
+        updateFunctionComponent(fiber)
+    } else {
+        updateHostComponent(fiber)
+    }
 
     // next unit of work
     if(fiber.child){
@@ -206,6 +204,21 @@ function performUnitOWork(fiber) {
         }
         nextFiber = nextFiber.parent
     }
+}
+
+function updateFunctionComponent(fiber) {
+    const children = [fiber.type(fiber.props)]
+    reconcileChildren(fiber, children)
+}
+
+function updateHostComponent(fiber) {
+    if(!fiber.dom){
+        fiber.dom = createDom(fiber)
+    }
+
+    // Create new fibers
+    const elements = fiber.props.children
+    reconcileChildren(fiber, elements)
 }
 
 function reconcileChildren(wipFiber, elements){
@@ -252,15 +265,9 @@ function reconcileChildren(wipFiber, elements){
         if(oldFiber){
             oldFiber = oldFiber.sibling
         }
-       // const newFiber = {
-       //     type: element.type,
-       //     props: element.props,
-       //     parent: fiber,
-       //     dom: null,
-       // }
 
         if(index === 0){
-            fiber.child = newFiber
+            wipFiber.child = newFiber
         } else if(element) {
             prevSibling.sibling = newFiber
         }
@@ -276,25 +283,27 @@ const Didact = {
 }
 
 /** @jsx Didact.createElement */
+function App(props) {
+    return <h1>Hello {props.name}</h1>
+}
+
 // Root container
 const container = document.getElementById("root")
 
-// const element = (
-// 	<div id="foo"><a href="https://megacolorboy.com">mega<strong>color</strong>boy</a></div>
-// )
-
 const updateValue = e => {
-    reRender(e.target.value)
+    rerender(e.target.value)
 }
 
-const reRender = value => {
-    const element = (
-        <div>
-            <input onInput={updateValue} value={value} />
-            <h2>Hello {value}</h2>
-        </div>
-    )
+const rerender = value => {
+    // const element = (
+    //     <div>
+    //         <input onInput={updateValue} value={value} />
+    //         <h2>Hello {value}</h2>
+    //     </div>
+    // )
+    // Didact.render(element, container)
+    const element = <App name="foo" name={value}/>
     Didact.render(element, container)
 }
 
-reRender("world!")
+rerender("world!")
